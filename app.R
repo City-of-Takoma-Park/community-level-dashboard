@@ -1,11 +1,3 @@
-#
-# This is a Shiny web application. You can run the application by clicking
-# the 'Run App' button above.
-#
-# Find out more about building applications with Shiny here:
-#
-#    http://shiny.rstudio.com/
-#
 
 library(shiny)
 library(tidyverse)
@@ -26,19 +18,24 @@ state_process <- function(statedf, countycol = county){
   statedf %>%
     dplyr::mutate(countyleg = gsub(" County", "", {{countycol}})) %>%
     dplyr::group_by({{countycol}}) %>%
-    dplyr::arrange(desc(date_format)) %>%
+    dplyr::arrange(desc(date_updated)) %>%
     dplyr::slice_head(n = 1) %>%
     dplyr::left_join(colors) %>%
-    dplyr::ungroup() %>%
-    pctile_rank("covid_hospital_admissions_per_100k") %>%
-    pctile_rank("covid_inpatient_bed_utilization") %>%
-    pctile_rank("covid_cases_per_100k")
+    dplyr::ungroup()
 }
+
+calc_all_pctile <- function(df, suffix){
+  df %>%
+    pctile_rank("covid_hospital_admissions_per_100k", suffix = suffix) %>%
+    pctile_rank("covid_inpatient_bed_utilization", suffix = suffix) %>%
+    pctile_rank("covid_cases_per_100k", suffix = suffix)
+}
+
 
 pctile_rank <- function(df, pctilevar, suffix = ""){
   
-  newvar <- paste0(pctilevar, "_pctile", suffix = "")
-  rank <- paste0(pctilevar, "_rank", suffix = "")
+  newvar <- paste0(pctilevar, "_pctile", suffix = suffix)
+  rank <- paste0(pctilevar, "_rank", suffix = suffix)
   
   df %>%
     dplyr::mutate(!!dplyr::sym(newvar) := dplyr::percent_rank(!!dplyr::sym(pctilevar)),
@@ -47,24 +44,39 @@ pctile_rank <- function(df, pctilevar, suffix = ""){
 
 plot_state <- function(df, varplot, subtitle, multistate = F, showleg = F){
   
-  gluetext <- dplyr::case_when(
-    multistate ~ "Current community level: {covid_19_community_level}
-                  Last date updated: {date_format}
-                  Percentile-ranking among selected counties: {round(df[[varpct]]*100, 1)}
-                  Ranking among selected counties: {df[[varrank]]}/{maxrank}",
-    T ~ "Current community level: {covid_19_community_level}
-                  Last date updated: {date_format}
-                  Percentile-ranking: {round(df[[varpct]]*100, 1)}
-                  Ranking among counties: {df[[varrank]]}/{maxrank}"
-  )
-  
+  # browser()
   
   # browser()
   var <- as.character(expr(!!varplot))[2]
   
-  varpct <- paste0(var, "_pctile")
-  varrank <- paste0(var, "_rank")
-  maxrank <- max(df[[varrank]])
+  varpct_state <- paste0(var, "_pctile", "_state")
+  varrank_state <- paste0(var, "_rank", "_state")
+  maxrank_state <- max(df[[varrank_state]])
+  
+  varpct_nation <- paste0(var, "_pctile", "_nation")
+  varrank_nation <- paste0(var, "_rank", "_nation")
+  maxrank_nation <- max(df[[varrank_nation]])
+  
+  if (multistate){
+    varpct_comp <- paste0(var, "_pctile", "_comp")
+    varrank_comp <- paste0(var, "_rank", "_comp")
+    maxrank_comp <- max(df[[varrank_comp]])
+  }
+  
+  gluetext <- dplyr::case_when(
+    multistate ~ "Current community level: {covid_19_community_level}
+    Last date updated: {date_format}
+    Ranking among selected counties: {df[[varrank_comp]]}/{maxrank_comp}
+    State percentile-ranking: {round(df[[varpct_state]]*100, 1)}
+    Nationwide percentile-ranking: {round(df[[varpct_nation]]*100, 1)}",
+    T ~ "Current community level: {covid_19_community_level}
+    Last date updated: {date_format}
+    Percentile-ranking among state counties: {round(df[[varpct_state]]*100, 1)}
+    Ranking among state counties: {df[[varrank_state]]}/{maxrank_state}
+    Nationwide percentile-ranking: {round(df[[varpct_nation]]*100, 1)}"
+  )
+  
+  
   # varpct <- sym(varpct)
   # varpct <- enquo(varpct)
   # 
@@ -76,7 +88,7 @@ plot_state <- function(df, varplot, subtitle, multistate = F, showleg = F){
                   y = varplot,
                   name = ~ covid_19_community_level,
                   type = "bar",
-                  hovertext = ~ glue::glue(),
+                  hovertext = ~ glue::glue(gluetext),
                   # texposition = "inside",
                   # textfont = list(color = "black"),
                   legendgroup = ~ covid_19_community_level,
@@ -89,7 +101,8 @@ plot_state <- function(df, varplot, subtitle, multistate = F, showleg = F){
   
 }
 
-subplots_state <- function(df, statename, dateformat){
+subplots_state <- function(df, statename, dateformat, multistate = F){
+  # browser()
   
   # print(glue::glue("{statename} counties by community-level components as of {dateformat}"))
   plotly::subplot(purrr::map2(rlang::list2(~ covid_cases_per_100k,
@@ -102,7 +115,7 @@ subplots_state <- function(df, statename, dateformat){
                                 
                                 showleg <- dplyr::if_else(grepl("Cases", .y), T, F)
                                 
-                                plot_state(df, .x, .y, showleg = showleg)
+                                plot_state(df, .x, .y, showleg = showleg, multistate = multistate)
                               }), 
                   nrows = 3, shareX = T) %>%
     plotly::layout(title = glue::glue("{statename} counties by community-level components as of {dateformat}"),
@@ -128,7 +141,8 @@ ui <- fluidPage(
     shiny::tabPanel(
       title = "Compare state counties",
       value = "statecomp",
-      # fluidRow(
+      br(),
+      fluidRow(
       column(width = 5,
              offset = 0.5, 
              shiny::selectInput("statepick", "Select which state you want community level information on", choices = state_list),
@@ -139,6 +153,7 @@ ui <- fluidPage(
              shiny::uiOutput(outputId = "county_info"),
              
              shiny::uiOutput(outputId = "countybutton")
+      )
       ),
       br(),
       
@@ -162,13 +177,19 @@ ui <- fluidPage(
     shiny::tabPanel(
       title = "Compare all counties",
       value = "countycomp",
+      
+      br(),
       # fluidRow(
-      shiny::selectizeInput("countypick", 
+              shiny::selectizeInput("countypick", 
                             choices = NULL,
                             label = "Select which counties you want to compare",
                             multiple = T),
       
       shiny::actionButton(inputId =  "submitcountylist", label = "Create graph comparing counties"),
+      
+      br(),
+      
+      br(),
       
       plotly::plotlyOutput("countycomp")
       # )
@@ -181,7 +202,7 @@ ui <- fluidPage(
 # Define server logic required to draw a histogram
 server <- function(input, output, session) {
   
-  updateSelectizeInput(session, inputId = "countypick", choices = county_all, server = T, label = "Select which counties you want to compare")
+  updateSelectizeInput(session, inputId = "countypick", choices = county_all %>% sort(), server = T, label = "Select which counties you want to compare")
   
   state_commlevel <- reactive({
     req(input$submitstate)
@@ -233,43 +254,70 @@ server <- function(input, output, session) {
   current_comm_level <- reactive({
     
     selected_county() %>%
+      ungroup %>%
       arrange(desc(date_updated)) %>%
       slice_head(n = 1) %>%
       pull(covid_19_community_level)
     
   })
   
-  output$county_comlevel <- plotly::renderPlotly({
+  
+  # https://stackoverflow.com/questions/57242792/update-plot-output-on-actionbutton-click-event-in-r-shiny
+  
+  reactiveplots <- reactiveValues(
+    countyind = NULL,
+    stateplot = NULL,
+    countyplot = NULL
+  )
+  
+  observeEvent(input$submitcounty, {
     
     title <- glue::glue("{input$countyselect} community level: {current_comm_level()}")
     # browser()
     
-    cdccovidplotting::subplots_keyvars(selected_county(), subrows = 1) %>%
+    reactiveplots$countyind <- cdccovidplotting::subplots_keyvars(selected_county(), subrows = 1) %>%
       plotly::layout(title = title, xaxis = list(title = "Date", yaxis = list(title = "")))
-  })
-  
-  output$statecomp <- plotly::renderPlotly({
     
-    req(input$submitcounty)
     
     date <- state_process_df()[["date_format"]][1]
     
     state <- state_process_df()[["state"]][[1]]
     
-    subplots_state(df = state_process_df(), statename = state, dateformat = date)
+    reactiveplots$stateplot <- subplots_state(df = state_process_df(), statename = state, dateformat = date)
+  })
+  
+  output$county_comlevel <- plotly::renderPlotly({
+    if (is.null(reactiveplots$stateplot)) return()
+    reactiveplots$countyind
+    
+  })
+  
+  output$statecomp <- plotly::renderPlotly({
+    
+    if (is.null(reactiveplots$stateplot)) return()
+    reactiveplots$stateplot
+    
+  })
+  
+  observeEvent(input$submitcountylist, {
+    outdf <- comm_level_all %>%
+      dplyr::filter(statecounty %in% input$countypick) %>%
+      state_process(countycol = statecounty) %>%
+      dplyr::ungroup() %>%
+      calc_all_pctile("_comp")
+    
+    reactiveplots$countyplot <- subplots_state(df = outdf, "Comparison-group", dateformat = " most recent updates", multistate = T)
     
   })
   
   output$countycomp <- plotly::renderPlotly({
-    req(input$submitcountylist)
     
-    outdf <- comm_level_all %>%
-      dplyr::filter(statecounty %in% input$countypick) %>%
-      state_process(countycol = statecounty)
+    # browser()
     
+    if (is.null(reactiveplots$countyplot)) return()
     
-    
-    subplots_state(df = outdf, "Comparison-group", dateformat = " most recent updates")
+    reactiveplots$countyplot
+
     
   })
   

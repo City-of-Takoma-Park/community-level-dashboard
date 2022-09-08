@@ -1,3 +1,7 @@
+# purpose: prepare data for app visualizing covid-19 community level data across places
+# note: was running intoa bug at end
+# last run: summer 2022
+
 library(httr)
 library(jsonlite)
 library(tidyverse)
@@ -11,7 +15,8 @@ state.name <- c(state.name,
                 "United States Virgin Islands",
                 "Commonwealth of the Northern Mariana Islands",
                 "Guam",
-                "American Samoa")
+                "American Samoa") %>%
+  gsub(" ", "+", .)
 
 # read in community level data
 read_process_save <- function(statename){
@@ -20,9 +25,40 @@ read_process_save <- function(statename){
   saveRDS(community_level, paste0("./data/community_level_", statename, ".rds"))
 }
 
-walk(state.name, read_process_save)
+# utils::read.csv(paste0("https://data.cdc.gov/resource/3nnm-4jni.csv?state=", 
+#                        "New+Hampshire"))
 
-bind_all <- map_dfr(grep("community_level_", dir("./data"), value = T), ~ readRDS(paste0("./data/", .x)))
+state_post_nh <- state.name[29:62]
+
+walk(state_post_nh, read_process_save)
+
+pctile_rank <- function(df, pctilevar, suffix = ""){
+  
+  newvar <- paste0(pctilevar, "_pctile", suffix)
+  rank <- paste0(pctilevar, "_rank", suffix)
+  
+  df %>%
+    dplyr::mutate(!!dplyr::sym(newvar) := dplyr::percent_rank(!!dplyr::sym(pctilevar)),
+                  !!dplyr::sym(rank) := dplyr::dense_rank(!!dplyr::sym(pctilevar)))
+}
+
+
+calc_all_pctile <- function(df, suffix){
+  df %>%
+    pctile_rank("covid_hospital_admissions_per_100k", suffix = suffix) %>%
+    pctile_rank("covid_inpatient_bed_utilization", suffix = suffix) %>%
+    pctile_rank("covid_cases_per_100k", suffix = suffix)
+}
+
+bind_all <- map_dfr(grep("community_level_", dir("./data"), value = T), ~ readRDS(paste0("./data/", .x))) %>%
+  dplyr::mutate(statecounty = paste0(county, ", ", state)) %>%
+  # calculate nationwide county rankings at point in time
+  dplyr::group_by(date_format) %>%
+  calc_all_pctile("_nation") %>%
+  dplyr::ungroup() %>%
+  dplyr::group_by(state, date_format) %>%
+  calc_all_pctile("_state")
+
 
 saveRDS(bind_all, "./data/all_community_level.rds")
 
@@ -40,10 +76,10 @@ state_process <- function(statedf){
     pctile_rank("covid_cases_per_100k")
 }
 
-pctile_rank <- function(df, pctilevar){
+pctile_rank <- function(df, pctilevar, suffix = ""){
   
-  newvar <- paste0(pctilevar, "_pctile")
-  rank <- paste0(pctilevar, "_rank")
+  newvar <- paste0(pctilevar, "_pctile", suffix)
+  rank <- paste0(pctilevar, "_rank", suffix)
   
   df %>%
     dplyr::mutate(!!dplyr::sym(newvar) := dplyr::percent_rank(!!dplyr::sym(pctilevar)),
